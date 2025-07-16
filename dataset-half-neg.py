@@ -1,3 +1,6 @@
+# In this version I am dividing the negative instances into two halves
+# and using one half for positive1 and the other half for positive2.    
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -11,43 +14,53 @@ class_p2 = 2
 class_u = 3
 
 class bagDataset(torch.utils.data.Dataset): # dataloader with bag labels
-    def __init__(self, num_bag=1000, bag_size=10, train = True, transform = None, epoch=0):
+    def __init__(self, num_bag=1000, bag_size=10, split = 'train', transform = None, epoch=0):
 
         self.bags = []
         self.labels = []
-        self.train = train
+        self.split = split
         self.transform = transform
         self.bag_size = bag_size
         self.num_bag = num_bag
 
         ins_dim = 784
 
-        if train:
-            df = pd.read_csv(f'mnist_train.csv',header=None)
-        else:
-            df = pd.read_csv(f'mnist_test.csv',header=None)
+        if split == 'train':
+            df = pd.read_csv('./data/mnist_split_train.csv', header=None)
+        elif split == 'val':
+            df = pd.read_csv('./data/mnist_split_val.csv', header=None)
+        elif split == 'test':
+            df = pd.read_csv('./data/mnist_split_test.csv', header=None)
+
         array = df.to_numpy()
         label = array[:,-1]
         data = (array[:,:-1]/255.0).astype(np.float32)
 
         n_idx = (label == class_n)
-        n_data = data[n_idx]
+        n_data_all = data[n_idx]
+        np.random.shuffle(n_data_all)  # ensure randomness
+
+        # Split into two halves
+        half = len(n_data_all) // 2
+        n_data_for_neg = n_data_all[:half]
+        n_data_for_pos = n_data_all[half:]
+        
+
         p1_idx = (label == class_p1)
         p1_data = data[p1_idx]
         p2_idx = (label == class_p2)
         p2_data = data[p2_idx]
 
-        if self.train:
+        if split == 'train':
             random.seed(epoch)
         else:
             random.seed(0)
 
-        for _ in range(self.num_bag): # create negative bags
-            np.random.shuffle(n_data)
-            instances = n_data[0].reshape(ins_dim)
-            # stack negative instances
+        for _ in range(self.num_bag):  # create negative bags
+            np.random.shuffle(n_data_for_neg)
+            instances = n_data_for_neg[0].reshape(ins_dim)
             for i in range(self.bag_size - 1):
-                tmp = n_data[i].reshape(ins_dim)
+                tmp = n_data_for_neg[i + 1].reshape(ins_dim)
                 instances = np.vstack([instances, tmp])
             self.bags.append(torch.from_numpy(instances).float())
             self.labels.append(torch.from_numpy(np.array([0])).long())
@@ -55,7 +68,7 @@ class bagDataset(torch.utils.data.Dataset): # dataloader with bag labels
         for _ in range(self.num_bag): # create positive1 bags
             num_pins = np.random.randint(1, self.bag_size + 1)
             np.random.shuffle(p1_data)
-            np.random.shuffle(n_data)
+            np.random.shuffle(n_data_for_pos)
             instances = p1_data[0].reshape(ins_dim)
             # stack positive instances
             for i in range(num_pins - 1):
@@ -63,7 +76,7 @@ class bagDataset(torch.utils.data.Dataset): # dataloader with bag labels
                 instances = np.vstack([instances, tmp])
             # stack negative instances
             for i in range(self.bag_size - num_pins):
-                tmp = n_data[i].reshape(ins_dim)
+                tmp = n_data_for_pos[i].reshape(ins_dim)
                 instances = np.vstack([instances, tmp])
             self.bags.append(torch.from_numpy(instances).float())
             self.labels.append(torch.from_numpy(np.array([1])).long())
@@ -71,7 +84,7 @@ class bagDataset(torch.utils.data.Dataset): # dataloader with bag labels
         for _ in range(self.num_bag): # create positive2 bags
             num_pins = np.random.randint(1, self.bag_size + 1)
             np.random.shuffle(p2_data)
-            np.random.shuffle(n_data)
+            np.random.shuffle(n_data_for_pos)
             instances = p2_data[0].reshape(ins_dim)
             # stack positive instances
             for i in range(num_pins - 1):
@@ -79,7 +92,7 @@ class bagDataset(torch.utils.data.Dataset): # dataloader with bag labels
                 instances = np.vstack([instances, tmp])
             # stack negative instances
             for i in range(self.bag_size - num_pins):
-                tmp = n_data[i].reshape(ins_dim)
+                tmp = n_data_for_pos[i].reshape(ins_dim)
                 instances = np.vstack([instances, tmp])
             self.bags.append(torch.from_numpy(instances).float())
             self.labels.append(torch.from_numpy(np.array([2])).long())

@@ -244,26 +244,35 @@ def train_ocsvm(features, labels):
     return ocsvm
 
 # Use One-Class SVM instead of OpenMax in attention assignment
-def predict_bag_with_isolation_attention(bag_tensor, ins_model, iso_forest_model, bag_classifier):
+def predict_bag_with_isolation_attention(bag_tensor, ins_model, iso_forest_model, iso_scaler, iso_pca, bag_classifier):
     ins_model.eval()
     with torch.no_grad():
         x = bag_tensor.squeeze(0)  # (num_instances x 784)
 
         # 1. Extract features and logits
-        features = ins_model.feature_ex(x)
-        logits = ins_model.classifier(features)
+        features = ins_model.feature_ex(x)                  # (num_instances x feature_dim)
+        logits = ins_model.classifier(features)             # (num_instances x num_classes)
         logits_np = logits.cpu().numpy()
 
-        # 2. Use Isolation Forest to detect anomalies
-        predictions = iso_forest_model.predict(logits_np)  # 1 = normal, -1 = anomaly
+        # 2. Preprocess: Scale and reduce dimensions before prediction
+        scaled_logits = iso_scaler.transform(logits_np)     # Standardization
+        reduced_logits = iso_pca.transform(scaled_logits)   # PCA projection
+
+        # 3. Predict anomalies: 1 = normal (negative), -1 = anomaly
+        predictions = iso_forest_model.predict(reduced_logits)
         attention_weights = [0.001 if p == 1 else 0.999 for p in predictions]
 
+        # 4. Normalize attention
         attention_tensor = torch.tensor(attention_weights).unsqueeze(0).to(bag_tensor.device)
         attention_tensor = attention_tensor / attention_tensor.sum()
 
+        # 5. Weighted feature aggregation
         z = torch.mm(attention_tensor, features)
+
+        # 6. Final bag classification
         class_prob = bag_classifier(z)
         return class_prob, None, z
+
 
 
 
@@ -321,18 +330,35 @@ if __name__ == '__main__':
     )
 
     # Step 2: Collect instance embeddings
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.decomposition import PCA
     from sklearn.ensemble import IsolationForest
 
     def train_isolation_forest(features, labels):
         neg_logits = features[labels == 0]
-        iso_forest = IsolationForest(contamination=0.1, random_state=0)
-        iso_forest.fit(neg_logits)
-        return iso_forest
+
+        # Normalize features
+        scaler = StandardScaler()
+        neg_scaled = scaler.fit_transform(neg_logits)
+
+        # Reduce dimension for better isolation
+        pca = PCA(n_components=2)
+        neg_reduced = pca.fit_transform(neg_scaled)
+
+        iso_forest = IsolationForest(
+            n_estimators=200,
+            contamination=0.1,
+            random_state=42
+        )
+        iso_forest.fit(neg_reduced)
+
+        return iso_forest, scaler, pca
+    
+
 
     # Step 2: Collect instance embeddings
     features, labels = collect_instance_embeddings(ins_model, calc_loader)
-    iso_forest_model = train_isolation_forest(features, labels)
-
+    iso_forest_model, iso_scaler, iso_pca = train_isolation_forest(features, labels)
 
 
     # Step 3: Fit OpenMax
@@ -374,10 +400,12 @@ if __name__ == '__main__':
         bag_tensor = bag_tensor.to(device)
         bag_label = bag_label.item()
 
-        class_prob, unk_prob, z = predict_bag_with_modified_attention(
+        class_prob, unk_prob, z = predict_bag_with_isolation_attention(
             bag_tensor,
             ins_model,
             iso_forest_model,
+            iso_scaler,
+            iso_pca,
             mil_model.classifier
         )
         
@@ -425,10 +453,10 @@ if __name__ == '__main__':
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1, 2, 3])
 
     # Display it
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Class 0", "Class 1", "Class 2", "Unknown"])
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Negative(0)", "Positive(1)", "Positive(2)", "Unknown"])
     disp.plot(cmap='Blues', xticks_rotation=45)
 
-    plt.title("Bag-Level Confusion Matrix (OpenMax)")
+    plt.title("Bag-Level Confusion Matrix (IslForest+OpenMax)")
     plt.tight_layout()
     plt.show()
 

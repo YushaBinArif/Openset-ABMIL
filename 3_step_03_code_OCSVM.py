@@ -420,10 +420,10 @@ if __name__ == '__main__':
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1, 2, 3])
 
     # Display it
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Class 0", "Class 1", "Class 2", "Unknown"])
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Negative(0)", "Positive(1)", "Positive(2)", "Unknown"])
     disp.plot(cmap='Blues', xticks_rotation=45)
 
-    plt.title("Bag-Level Confusion Matrix (OpenMax)")
+    plt.title("Bag-Level Confusion Matrix (OC-SVM+OpenMax)")
     plt.tight_layout()
     plt.show()
 
