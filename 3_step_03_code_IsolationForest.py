@@ -347,7 +347,9 @@ if __name__ == '__main__':
 
         iso_forest = IsolationForest(
             n_estimators=200,
-            contamination=0.1,
+            contamination=0.01,
+            max_samples='auto',
+            max_features=1.0,
             random_state=42
         )
         iso_forest.fit(neg_reduced)
